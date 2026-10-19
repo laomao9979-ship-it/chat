@@ -6,41 +6,70 @@
 <meta name="robots" content="noindex,nofollow">
 <title>聊天</title>
 <style>
-:root{--ink:#1d1d1f;--page:#fff}
-@media(prefers-color-scheme:dark){:root{--ink:#ececf1;--page:#16161a}}
-body{margin:0;min-height:100vh;display:grid;place-items:center;padding:0 16px;background:var(--page);color:var(--ink);font:16px/1.6 system-ui,-apple-system,"PingFang SC","Microsoft YaHei",sans-serif;text-align:center}
+:root{--ink:#1d1d1f;--muted:#6b6b74;--page:#f6f6f8;--card:#fff;--line:#e3e3e8;--accent:#4f46e5}
+@media(prefers-color-scheme:dark){:root{--ink:#ececf1;--muted:#a3a3ad;--page:#1e1e23;--card:#24242a;--line:#3b3b45;--accent:#8b85ff}}
+*{box-sizing:border-box}body{margin:0;min-height:100vh;min-height:100dvh;display:grid;place-items:center;padding:0 16px;background:var(--page);color:var(--ink);font:16px/1.6 -apple-system,"PingFang SC","Microsoft YaHei",system-ui,sans-serif;text-align:center}
+.card{width:min(360px,100%);background:var(--card);border:1px solid var(--line);border-radius:22px;padding:36px 24px}
+.logo{display:inline-grid;place-items:center;width:52px;height:52px;border-radius:16px;background:color-mix(in srgb,var(--accent) 12%,transparent);color:var(--accent);font-size:28px}
+h1{font-size:20px;margin:12px 0 4px}#m{margin:0}#h{margin:10px 0 0;font-size:13px;color:var(--muted)}
+.dots{display:flex;gap:6px;justify-content:center;margin-top:18px}.dots i{width:7px;height:7px;border-radius:50%;background:var(--muted);animation:b 1.2s infinite}.dots i:nth-child(2){animation-delay:.15s}.dots i:nth-child(3){animation-delay:.3s}
+@keyframes b{0%,80%,100%{opacity:.25}40%{opacity:1}}
 </style>
 </head>
 <body>
-<p id="m">正在打开聊天…</p>
+<div class="card"><span class="logo" aria-hidden="true">✳</span><h1>朋友聊天</h1><p id="m">正在打开聊天…</p><p id="h">不用刷新，接上会自动进入。</p><div class="dots" aria-hidden="true"><i></i><i></i><i></i></div></div>
 <script>
 // 固定门牌：url.txt 里是当前聊天地址，由主人电脑上的服务在地址变化时自动更新。
 // 这里还替这台设备存着免输口令的钥匙（聊天地址会变，存在那边会丢）。
 const test = new URLSearchParams(location.search).get('i') === 'test';
-const KEY = test ? 'friend-chat-key-test' : 'friend-chat-key', FILE = test ? 'url-test.txt' : 'url.txt';
-const say = t => { document.getElementById('m').textContent = t; };
+const KEY = test ? 'friend-chat-key-test' : 'friend-chat-key', NAME = test ? 'url-test.txt' : 'url.txt', FILE = NAME;
+const API = 'https://api.github.com/repos/laomao9979-ship-it/chat/contents/' + NAME + '?ref=main';
+let said = '正在打开聊天…';
+const say = t => { said = t; document.getElementById('m').textContent = navigator.onLine === false ? '你的网络好像断了，连上后会自动进入。' : t; };
 const store = (fn, fallback) => { try { return fn(localStorage); } catch { return fallback; } };
 // 聊天页带来的：save 存钥匙、forget 删钥匙、dead 已失效的旧地址、c 当前对话、d 草稿、r 草稿的请求号。
 const got = new URLSearchParams(location.hash.slice(1));
 if (location.hash) history.replaceState(null, '', location.pathname + location.search);
 if (got.get('save')) store(s => s.setItem(KEY, got.get('save')));
 if (got.get('forget')) store(s => s.removeItem(KEY));
-const dead = got.get('dead'), started = Date.now();
-if (dead) say('地址刚换，正在接上新的…');
+const started = Date.now();
+if (got.get('dead')) say('地址刚换，正在接上新的…');
+// 地址换了以后门牌要过一会儿才跟上：先确认那边真能用再跳，不把人带到失效页上。
+async function alive(u) {
+  try { const r = await fetch(u + '/api/health', { cache: 'no-store', signal: AbortSignal.timeout(8000) }); return r.ok && (await r.json()).app === 'friend-chat'; } catch { return false; }
+}
+const valid = u => /^https:\/\/[a-z0-9-]+\.(lhr\.life|localhost\.run)$/i.test(u || '');
+async function read(url, api) {
+  try { const r = await fetch(url, { cache: 'no-store', signal: AbortSignal.timeout(10000) }); if (!r.ok) return null; return api ? atob((await r.json()).content.replace(/\s/g, '')).trim() : (await r.text()).trim(); } catch { return null; }
+}
+// 这里的 url.txt 要等 GitHub Pages 部署才更新（慢时十几分钟）；不通就直接问 GitHub 接口拿最新的。
+// 接口每台设备每小时限 60 次，所以隔一阵才问一次（前 5 分钟 20 秒一次，之后 2 分钟一次）。
+let apiAt = 0, fresh = null;
 async function next() {
-  let u = '';
-  try { const r = await fetch(FILE + '?t=' + Date.now(), { cache: 'no-store' }); if (r.ok) u = (await r.text()).trim(); } catch {}
-  const valid = /^https:\/\/[a-z0-9-]+\.(lhr\.life|localhost\.run)$/i.test(u);
-  // 旧地址失效时等它换成新的；等了 45 秒还是同一个，就再试一次那个地址（可能只是一时没连上）。
-  if (valid && (!dead || u !== dead || Date.now() - started > 45000)) {
+  // 第一次两处同时问，用最新的那个，少等一轮。
+  const first = !apiAt;
+  if (first) apiAt = Date.now() + 20000;
+  let [u, v] = await Promise.all([read(FILE + '?t=' + Date.now()), first ? read(API, true) : null]);
+  if (v) { fresh = v; u = v; }
+  let go = valid(u) && await alive(u);
+  if (!go && Date.now() >= apiAt) {
+    apiAt = Date.now() + (Date.now() - started < 300000 ? 20000 : 120000);
+    v = await read(API, true); if (v !== null) fresh = v;
+    if (v !== null && v !== u) { u = v; go = valid(u) && await alive(u); }
+  }
+  if (go) {
     const p = new URLSearchParams(), k = store(s => s.getItem(KEY), '');
     if (k) p.set('k', k);
     for (const n of ['c', 'd', 'r']) if (got.get(n)) p.set(n, got.get(n));
     return location.replace(u + '/' + (String(p) ? '#' + p : ''));
   }
-  if (!dead || Date.now() - started > 45000) say(u ? '地址刚换，正在接上新的…' : '聊天暂时没开，开了会自动进入。');
+  // 从聊天页刚过来的多半是在重启更新，先别说“没开”。
+  const restarting = got.get('dead') && Date.now() - started < 180000;
+  say(valid(fresh ?? u) ? '地址刚换，正在接上新的…' : restarting ? '正在重新连接，马上回来…' : '聊天暂时没开，开了会自动进入。');
+  document.getElementById('h').textContent = (got.get('dead') ? '聊天记录都在，' : '') + (Date.now() - started < 60000 ? '通常一两分钟内接上，不用刷新。' : '还在等，不用管它，接上会自动进入。');
   setTimeout(next, Date.now() - started < 60000 ? 3000 : 15000);
 }
+addEventListener('offline', () => say(said)); addEventListener('online', () => say(said));
 next();
 </script>
 </body>
