@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="robots" content="noindex,nofollow">
+<title>聊天</title>
+<style>
+:root{--ink:#1d1d1f;--page:#fff}
+@media(prefers-color-scheme:dark){:root{--ink:#ececf1;--page:#16161a}}
+body{margin:0;min-height:100vh;display:grid;place-items:center;padding:0 16px;background:var(--page);color:var(--ink);font:16px/1.6 system-ui,-apple-system,"PingFang SC","Microsoft YaHei",sans-serif;text-align:center}
+</style>
+</head>
+<body>
+<p id="m">正在打开聊天…</p>
+<script>
+// 固定门牌：url.txt 里是当前聊天地址，由主人电脑上的服务在地址变化时自动更新。
+// 这里还替这台设备存着免输口令的钥匙（聊天地址会变，存在那边会丢）。
+const test = new URLSearchParams(location.search).get('i') === 'test';
+const KEY = test ? 'friend-chat-key-test' : 'friend-chat-key', FILE = test ? '../url-test.txt' : '../url.txt';
+const say = t => { document.getElementById('m').textContent = t; };
+const store = (fn, fallback) => { try { return fn(localStorage); } catch { return fallback; } };
+// 聊天页带来的：save 存钥匙、forget 删钥匙、dead 已失效的旧地址、c 当前对话、d 草稿、r 草稿的请求号。
+const got = new URLSearchParams(location.hash.slice(1));
+if (location.hash) history.replaceState(null, '', location.pathname + location.search);
+if (got.get('save')) store(s => s.setItem(KEY, got.get('save')));
+if (got.get('forget')) store(s => s.removeItem(KEY));
+const started = Date.now();
+if (got.get('dead')) say('地址刚换，正在接上新的…');
+// 地址换了以后门牌要过一会儿才跟上：先确认那边真能用再跳，不把人带到失效页上。
+async function alive(u) {
+  try { const r = await fetch(u + '/api/health', { cache: 'no-store', signal: AbortSignal.timeout(8000) }); return r.ok && (await r.json()).app === 'friend-chat'; } catch { return false; }
+}
+async function next() {
+  let u = '';
+  try { const r = await fetch(FILE + '?t=' + Date.now(), { cache: 'no-store' }); if (r.ok) u = (await r.text()).trim(); } catch {}
+  const valid = /^https:\/\/[a-z0-9-]+\.(lhr\.life|localhost\.run)$/i.test(u);
+  if (valid && await alive(u)) {
+    const p = new URLSearchParams(), k = store(s => s.getItem(KEY), '');
+    if (k) p.set('k', k);
+    for (const n of ['c', 'd', 'r']) if (got.get(n)) p.set(n, got.get(n));
+    return location.replace(u + '/' + (String(p) ? '#' + p : ''));
+  }
+  say(valid ? '地址刚换，正在接上新的…' : '聊天暂时没开，开了会自动进入。');
+  setTimeout(next, Date.now() - started < 60000 ? 3000 : 15000);
+}
+next();
+</script>
+</body>
+</html>
