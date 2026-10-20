@@ -1,5 +1,5 @@
-import { renderUsage, modelLabel } from './usage-view.js?v=41c793fc';
-import { renderMarkdown } from './markdown.js?v=41c793fc';
+import { renderUsage, modelLabel } from './usage-view.js?v=9de83cbb';
+import { renderMarkdown } from './markdown.js?v=9de83cbb';
 const $ = id => document.getElementById(id);
 const touch = matchMedia('(pointer: coarse)').matches;
 let currentId = sessionStorage.getItem('conversationId'), conversations = [], busy = false, paused = false, currentJob, pendingNode, timer, stream, follow = true;
